@@ -299,6 +299,128 @@ err := users.DeleteByID(ctx, id)
 
 ---
 
+## Join (União de Coleções)
+
+O Monger oferece funções para unir dados de múltiplas coleções, similar ao `JOIN` do SQL. Você pode unir documentos que compartilham um valor comum em um campo específico (como `_id`, `cpf`, `email`, etc.).
+
+### JoinCollection
+
+Representa uma coleção a ser unida. Use `NewJoinCollection` para criar a partir de um Repository:
+
+```go
+jc := monger.NewJoinCollection(usersRepo, "cpf", "user")
+```
+
+Parâmetros:
+- `repo`: o Repository da coleção
+- `field`: campo a ser usado na junção (ex: `"cpf"`, `"_id"`, `"email"`)
+- `alias`: nome do campo no resultado (se vazio, os campos são mesclados diretamente)
+
+### Join
+
+Busca um documento em cada coleção que contenha o valor comum e retorna um único documento mesclado:
+
+```go
+// Exemplo: buscar dados de um usuário em múltiplas coleções pelo CPF
+result, err := monger.Join(ctx, "12345678900",
+    monger.NewJoinCollection(usersRepo, "cpf", "user"),
+    monger.NewJoinCollection(addressRepo, "ownerCpf", "address"),
+    monger.NewJoinCollection(profileRepo, "documentCpf", "profile"),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+// result.Data contém:
+// {
+//   "user": { "name": "Ana", "cpf": "12345678900", ... },
+//   "address": { "street": "Rua X", "ownerCpf": "12345678900", ... },
+//   "profile": { "bio": "...", "documentCpf": "12345678900", ... }
+// }
+fmt.Printf("%+v\n", result.Data)
+```
+
+Se o `alias` for vazio, os campos são mesclados diretamente no resultado:
+
+```go
+result, err := monger.Join(ctx, "12345678900",
+    monger.NewJoinCollection(usersRepo, "cpf", ""),      // sem alias
+    monger.NewJoinCollection(profileRepo, "cpf", ""),   // sem alias
+)
+// result.Data: { "name": "Ana", "cpf": "12345678900", "bio": "...", ... }
+```
+
+### JoinAll
+
+Similar ao `Join`, mas retorna **todos** os documentos encontrados em cada coleção (útil para relações 1:N):
+
+```go
+// Um usuário pode ter múltiplos pedidos
+result, err := monger.JoinAll(ctx, "12345678900",
+    monger.NewJoinCollection(usersRepo, "cpf", "user"),
+    monger.NewJoinCollection(ordersRepo, "customerCpf", "orders"),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+// result.Data:
+// {
+//   "user": { "name": "Ana", "cpf": "12345678900" },
+//   "orders": [
+//     { "orderId": "001", "customerCpf": "12345678900", "total": 100 },
+//     { "orderId": "002", "customerCpf": "12345678900", "total": 250 }
+//   ]
+// }
+```
+
+### JoinWithLookup (Agregação no Servidor)
+
+Usa o operador `$lookup` do MongoDB para fazer o join diretamente no servidor. **Mais eficiente para grandes volumes de dados**.
+
+```go
+result, err := monger.JoinWithLookup(ctx,
+    usersRepo.Collection(),  // coleção base
+    "cpf",                   // campo local
+    "12345678900",           // valor a buscar
+    monger.LookupConfig{
+        From:         "orders",
+        LocalField:   "cpf",
+        ForeignField: "customerCpf",
+        As:           "orders",
+    },
+    monger.LookupConfig{
+        From:         "addresses",
+        LocalField:   "cpf",
+        ForeignField: "ownerCpf",
+        As:           "address",
+    },
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("%+v\n", result.Data)
+```
+
+### Collection (acessar coleção subjacente)
+
+Para usar `JoinWithLookup`, você pode precisar acessar a coleção MongoDB diretamente:
+
+```go
+coll := usersRepo.Collection()
+```
+
+### Quando usar cada função?
+
+| Função | Uso recomendado |
+|--------|-----------------|
+| `Join` | Buscar um documento por coleção (relação 1:1) |
+| `JoinAll` | Buscar múltiplos documentos por coleção (relação 1:N) |
+| `JoinWithLookup` | Grandes volumes de dados, join feito no servidor MongoDB |
+
+---
+
 ## Dicas de uso
 
 - Use `context.Context` com timeout/cancelamento (principalmente em produção).

@@ -388,3 +388,232 @@ func (r *Repository[T]) DeleteByID(ctx context.Context, id string) error {
 	_, err = r.coll.DeleteOne(ctx, M{"_id": oid})
 	return err
 }
+
+// --- JOIN (união de coleções) ---
+
+// JoinResult encapsula o resultado da união de múltiplas coleções
+type JoinResult struct {
+	Data M `json:"data" bson:",inline"`
+}
+
+// JoinCollection representa uma coleção a ser unida no Join
+type JoinCollection struct {
+	Collection *mongo.Collection // Coleção do MongoDB
+	Field      string            // Campo local a ser usado na junção (pode ser diferente do campo comum)
+	Alias      string            // Alias para os campos dessa coleção no resultado (opcional)
+}
+
+// NewJoinCollection cria uma JoinCollection a partir de um Repository
+func NewJoinCollection[T any](repo *Repository[T], field string, alias string) JoinCollection {
+	return JoinCollection{
+		Collection: repo.coll,
+		Field:      field,
+		Alias:      alias,
+	}
+}
+
+// Join busca documentos em múltiplas coleções que compartilham um valor comum em um campo específico.
+// Retorna um único documento (M) contendo a união de todos os campos encontrados.
+//
+// Parâmetros:
+//   - ctx: contexto da operação
+//   - commonValue: valor do campo comum a ser buscado (ex: um ID, CPF, email, etc.)
+//   - collections: lista de JoinCollection contendo as coleções e configurações
+//
+// Exemplo de uso:
+//
+//	result, err := monger.Join(ctx, "12345678900",
+//	    monger.NewJoinCollection(usersRepo, "cpf", "user"),
+//	    monger.NewJoinCollection(ordersRepo, "customerCpf", "orders"),
+//	    monger.NewJoinCollection(addressRepo, "ownerCpf", "address"),
+//	)
+func Join(ctx context.Context, commonValue any, collections ...JoinCollection) (*JoinResult, error) {
+	if len(collections) == 0 {
+		return nil, fmt.Errorf("pelo menos uma coleção é necessária")
+	}
+
+	result := M{}
+
+	for _, jc := range collections {
+		if jc.Collection == nil {
+			return nil, fmt.Errorf("coleção não pode ser nil")
+		}
+		if jc.Field == "" {
+			return nil, fmt.Errorf("field não pode ser vazio")
+		}
+
+		// Busca o documento na coleção
+		var doc M
+		err := jc.Collection.FindOne(ctx, M{jc.Field: commonValue}).Decode(&doc)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				continue // Documento não encontrado, pula para a próxima coleção
+			}
+			return nil, fmt.Errorf("erro ao buscar na coleção: %w", err)
+		}
+
+		// Mescla os campos no resultado
+		if jc.Alias != "" {
+			// Com alias: agrupa os campos sob o alias
+			result[jc.Alias] = doc
+		} else {
+			// Sem alias: mescla os campos diretamente no resultado
+			for k, v := range doc {
+				result[k] = v
+			}
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, mongo.ErrNoDocuments
+	}
+
+	return &JoinResult{Data: result}, nil
+}
+
+// JoinAll busca TODOS os documentos em cada coleção que compartilham o valor comum.
+// Similar ao Join, mas retorna arrays quando há múltiplos documentos em uma coleção.
+//
+// Parâmetros:
+//   - ctx: contexto da operação
+//   - commonValue: valor do campo comum a ser buscado
+//   - collections: lista de JoinCollection
+//
+// Exemplo de uso:
+//
+//	result, err := monger.JoinAll(ctx, "12345678900",
+//	    monger.NewJoinCollection(usersRepo, "cpf", "user"),
+//	    monger.NewJoinCollection(ordersRepo, "customerCpf", "orders"), // pode ter múltiplos pedidos
+//	)
+func JoinAll(ctx context.Context, commonValue any, collections ...JoinCollection) (*JoinResult, error) {
+	if len(collections) == 0 {
+		return nil, fmt.Errorf("pelo menos uma coleção é necessária")
+	}
+
+	result := M{}
+
+	for _, jc := range collections {
+		if jc.Collection == nil {
+			return nil, fmt.Errorf("coleção não pode ser nil")
+		}
+		if jc.Field == "" {
+			return nil, fmt.Errorf("field não pode ser vazio")
+		}
+
+		// Busca todos os documentos na coleção
+		cursor, err := jc.Collection.Find(ctx, M{jc.Field: commonValue})
+		if err != nil {
+			return nil, fmt.Errorf("erro ao buscar na coleção: %w", err)
+		}
+
+		var docs []M
+		if err := cursor.All(ctx, &docs); err != nil {
+			cursor.Close(ctx)
+			return nil, fmt.Errorf("erro ao decodificar documentos: %w", err)
+		}
+		cursor.Close(ctx)
+
+		if len(docs) == 0 {
+			continue
+		}
+
+		// Mescla os campos no resultado
+		if jc.Alias != "" {
+			if len(docs) == 1 {
+				result[jc.Alias] = docs[0]
+			} else {
+				result[jc.Alias] = docs
+			}
+		} else {
+			// Sem alias: mescla apenas o primeiro documento diretamente
+			for k, v := range docs[0] {
+				result[k] = v
+			}
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, mongo.ErrNoDocuments
+	}
+
+	return &JoinResult{Data: result}, nil
+}
+
+// JoinWithLookup usa agregação $lookup do MongoDB para fazer join server-side.
+// Mais eficiente para grandes volumes de dados pois o join é feito no servidor.
+//
+// Parâmetros:
+//   - ctx: contexto da operação
+//   - baseCollection: coleção base (de onde a agregação começa)
+//   - localField: campo na coleção base
+//   - localValue: valor a ser buscado na coleção base
+//   - lookups: configurações de lookup para cada coleção a ser unida
+//
+// Exemplo de uso:
+//
+//	result, err := monger.JoinWithLookup(ctx, usersRepo.Collection(), "cpf", "12345678900",
+//	    monger.LookupConfig{From: "orders", LocalField: "cpf", ForeignField: "customerCpf", As: "orders"},
+//	    monger.LookupConfig{From: "addresses", LocalField: "cpf", ForeignField: "ownerCpf", As: "address"},
+//	)
+type LookupConfig struct {
+	From         string // Nome da coleção externa
+	LocalField   string // Campo na coleção base
+	ForeignField string // Campo na coleção externa
+	As           string // Nome do campo no resultado
+}
+
+// Collection retorna a coleção MongoDB subjacente do Repository
+func (r *Repository[T]) Collection() *mongo.Collection {
+	return r.coll
+}
+
+// JoinWithLookup executa uma agregação com $lookup para unir coleções no servidor
+func JoinWithLookup(ctx context.Context, baseCollection *mongo.Collection, localField string, localValue any, lookups ...LookupConfig) (*JoinResult, error) {
+	if baseCollection == nil {
+		return nil, fmt.Errorf("baseCollection não pode ser nil")
+	}
+
+	// Pipeline de agregação
+	pipeline := []M{
+		{"$match": M{localField: localValue}},
+	}
+
+	// Adiciona os lookups
+	for _, lc := range lookups {
+		if lc.From == "" || lc.ForeignField == "" || lc.As == "" {
+			return nil, fmt.Errorf("LookupConfig inválido: From, ForeignField e As são obrigatórios")
+		}
+		localF := lc.LocalField
+		if localF == "" {
+			localF = localField
+		}
+		pipeline = append(pipeline, M{
+			"$lookup": M{
+				"from":         lc.From,
+				"localField":   localF,
+				"foreignField": lc.ForeignField,
+				"as":           lc.As,
+			},
+		})
+	}
+
+	// Limita a um documento
+	pipeline = append(pipeline, M{"$limit": 1})
+
+	cursor, err := baseCollection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("erro na agregação: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []M
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, fmt.Errorf("erro ao decodificar resultado: %w", err)
+	}
+
+	if len(results) == 0 {
+		return nil, mongo.ErrNoDocuments
+	}
+
+	return &JoinResult{Data: results[0]}, nil
+}
