@@ -552,13 +552,12 @@ func JoinAll(ctx context.Context, commonValue any, collections ...JoinCollection
 // Exemplo de uso:
 //
 //	result, err := monger.JoinWithLookup(ctx, usersRepo.Collection(), "cpf", "12345678900",
-//	    monger.LookupConfig{From: "orders", LocalField: "cpf", ForeignField: "customerCpf", As: "orders"},
-//	    monger.LookupConfig{From: "addresses", LocalField: "cpf", ForeignField: "ownerCpf", As: "address"},
+//	    monger.LookupConfig{From: "orders", ForeignField: "customerCpf", As: "orders"},
+//	    monger.LookupConfig{From: "addresses", ForeignField: "ownerCpf", As: "address"},
 //	)
 type LookupConfig struct {
 	From         string // Nome da coleção externa
-	LocalField   string // Campo na coleção base
-	ForeignField string // Campo na coleção externa
+	ForeignField string // Campo na coleção externa (chave de relacionamento na coleção externa)
 	As           string // Nome do campo no resultado
 }
 
@@ -583,16 +582,27 @@ func JoinWithLookup(ctx context.Context, baseCollection *mongo.Collection, local
 		if lc.From == "" || lc.ForeignField == "" || lc.As == "" {
 			return nil, fmt.Errorf("LookupConfig inválido: From, ForeignField e As são obrigatórios")
 		}
-		localF := lc.LocalField
-		if localF == "" {
-			localF = localField
+
+		// Usa $lookup com pipeline para permitir remover o campo de junção (ForeignField)
+		// e evitar repetir o valor que já existe no documento base (ex.: cpf).
+		lookupPipeline := []M{
+			{
+				"$match": M{
+					"$expr": M{
+						"$eq": []any{"$" + lc.ForeignField, "$$localValue"},
+					},
+				},
+			},
 		}
+		// Remove a chave usada no relacionamento do resultado do lookup.
+		lookupPipeline = append(lookupPipeline, M{"$project": M{lc.ForeignField: 0}})
+
 		pipeline = append(pipeline, M{
 			"$lookup": M{
-				"from":         lc.From,
-				"localField":   localF,
-				"foreignField": lc.ForeignField,
-				"as":           lc.As,
+				"from":     lc.From,
+				"let":      M{"localValue": "$" + localField},
+				"pipeline": lookupPipeline,
+				"as":       lc.As,
 			},
 		})
 	}

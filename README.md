@@ -301,7 +301,17 @@ err := users.DeleteByID(ctx, id)
 
 ## Join (União de Coleções)
 
-O Monger oferece funções para unir dados de múltiplas coleções, similar ao `JOIN` do SQL. Você pode unir documentos que compartilham um valor comum em um campo específico (como `_id`, `cpf`, `email`, etc.).
+O Monger oferece funções para “juntar” dados de múltiplas coleções usando um **valor em comum** (por exemplo: `cpf`, `email`, `userId`).
+
+Importante: `Join`/`JoinAll` fazem buscas **coleção por coleção** (várias consultas). Para volumes grandes, ou quando você quer que o Mongo faça a união no servidor, prefira `JoinWithLookup`.
+
+### Receita rápida (como pensar)
+
+1) Escolha o `commonValue` (o valor que vai servir de chave). Ex.: `"12345678900"`.
+
+2) Para cada coleção, diga qual **campo** guarda esse valor.
+
+3) Use `alias` (recomendado) para evitar colisão de campos e deixar o resultado organizado.
 
 ### JoinCollection
 
@@ -314,7 +324,9 @@ jc := monger.NewJoinCollection(usersRepo, "cpf", "user")
 Parâmetros:
 - `repo`: o Repository da coleção
 - `field`: campo a ser usado na junção (ex: `"cpf"`, `"_id"`, `"email"`)
-- `alias`: nome do campo no resultado (se vazio, os campos são mesclados diretamente)
+- `alias`: nome do campo no resultado.
+	- Se **não vazio**: o documento daquela coleção fica aninhado em `result.Data[alias]`.
+	- Se **vazio**: os campos são mesclados no nível raiz do resultado (se houver chaves iguais, a última coleção pode sobrescrever valores).
 
 ### Join
 
@@ -328,7 +340,7 @@ result, err := monger.Join(ctx, "12345678900",
     monger.NewJoinCollection(profileRepo, "documentCpf", "profile"),
 )
 if err != nil {
-    log.Fatal(err)
+	log.Fatal(err)
 }
 
 // result.Data contém:
@@ -339,6 +351,12 @@ if err != nil {
 // }
 fmt.Printf("%+v\n", result.Data)
 ```
+
+Comportamento importante:
+
+- Se uma coleção não tiver documento com o valor, ela é ignorada.
+- Se nenhuma coleção retornar dados, o erro é `mongo.ErrNoDocuments`.
+- O retorno é `*monger.JoinResult` e os dados ficam em `result.Data` (um `monger.M`, alias de `bson.M`).
 
 Se o `alias` for vazio, os campos são mesclados diretamente no resultado:
 
@@ -374,34 +392,69 @@ if err != nil {
 // }
 ```
 
+Notas:
+
+- Com `alias` definido: se a coleção retornar 1 documento, vira objeto; se retornar >1, vira array.
+- Sem `alias`: o Monger mescla somente o primeiro documento encontrado daquela coleção no resultado.
+
 ### JoinWithLookup (Agregação no Servidor)
 
 Usa o operador `$lookup` do MongoDB para fazer o join diretamente no servidor. **Mais eficiente para grandes volumes de dados**.
 
+#### monger.LookupConfig
+
+Cada `monger.LookupConfig` vira um estágio `$lookup` no pipeline. Campos:
+
+- `From`: nome da coleção que será consultada (coleção “externa”).
+- `ForeignField`: campo na coleção externa que será comparado com o `localField` da coleção base.
+- `As`: nome do campo onde o MongoDB colocará o resultado do `$lookup`.
+
+O Monger remove automaticamente do resultado do `$lookup` o campo usado como chave de relacionamento (`ForeignField`) para evitar repetir dados (ex.: não retorna `customerCpf` se você já tem `cpf` no documento base).
+
+> Observação: no MongoDB, `$lookup` sempre retorna um **array** no campo `As` (mesmo quando a relação é 1:1).
+
 ```go
 result, err := monger.JoinWithLookup(ctx,
-    usersRepo.Collection(),  // coleção base
-    "cpf",                   // campo local
-    "12345678900",           // valor a buscar
-    monger.LookupConfig{
-        From:         "orders",
-        LocalField:   "cpf",
-        ForeignField: "customerCpf",
-        As:           "orders",
-    },
-    monger.LookupConfig{
-        From:         "addresses",
-        LocalField:   "cpf",
-        ForeignField: "ownerCpf",
-        As:           "address",
-    },
+	usersRepo.Collection(),  // coleção base (onde começa a agregação)
+	"cpf",                   // localField: campo na coleção base
+	"12345678900",           // localValue: valor a buscar na coleção base
+	monger.LookupConfig{
+		From:         "orders",       // coleção externa
+		ForeignField: "customerCpf",  // campo na externa que referencia o CPF
+		As:           "orders",       // nome do campo no resultado
+	},
+	monger.LookupConfig{
+		From:         "addresses",
+		ForeignField: "ownerCpf",
+		As:           "address",
+	},
 )
 if err != nil {
     log.Fatal(err)
 }
 
+// result.Data contém o documento base + campos do lookup:
+// {
+//   "_id": "...",
+//   "cpf": "12345678900",
+//   "name": "Ana",
+//   "orders": [
+//     { "orderId": "001", "total": 100 },
+//     { "orderId": "002", "total": 250 }
+//   ],
+//   "address": [
+//     { "street": "Rua X" }
+//   ]
+// }
+
 fmt.Printf("%+v\n", result.Data)
 ```
+
+Detalhes úteis:
+
+- A agregação começa na `baseCollection` (o primeiro `$match` acontece nela).
+- Em `LookupConfig`, `From`, `ForeignField` e `As` são obrigatórios.
+- O Monger remove automaticamente o `ForeignField` do resultado do `$lookup` (evita repetir a chave).
 
 ### Collection (acessar coleção subjacente)
 
