@@ -185,6 +185,92 @@ func (r *Repository[T]) InsertOne(ctx context.Context, model *T) (string, error)
 	return oid.Hex(), nil
 }
 
+// InsertOneAndUpdate realiza um upsert: se o documento já existir (baseado no filtro), atualiza apenas os campos diferentes;
+// se não existir, insere o documento completo.
+//
+// Parâmetros:
+//   - ctx: contexto da operação
+//   - filter: filtro para identificar o documento (use FilterBuilder ou nil para filtrar pelo _id do model)
+//   - model: documento a ser inserido ou usado para atualização
+//
+// Retorna o ID do documento (inserido ou existente) e um booleano indicando se foi uma inserção (true) ou atualização (false).
+func (r *Repository[T]) InsertOneAndUpdate(ctx context.Context, filter *FilterBuilder, model *T) (string, bool, error) {
+	if model == nil {
+		return "", false, fmt.Errorf("model não pode ser nil")
+	}
+
+	// Monta o filtro
+	f := M{}
+	if filter != nil {
+		f = filter.Build()
+	} else {
+		// Tenta extrair o _id do model via reflection
+		v := reflect.ValueOf(model)
+		if v.Kind() == reflect.Pointer {
+			v = v.Elem()
+		}
+		if v.Kind() == reflect.Struct {
+			t := v.Type()
+			for i := 0; i < v.NumField(); i++ {
+				sf := t.Field(i)
+				tag, _ := parseBsonTag(sf.Tag.Get("bson"))
+				if tag == "_id" || (tag == "" && sf.Name == "ID") {
+					fv := v.Field(i)
+					if !fv.IsZero() {
+						f["_id"] = fv.Interface()
+					}
+					break
+				}
+			}
+		}
+		if len(f) == 0 {
+			return "", false, fmt.Errorf("filter é obrigatório quando o model não possui _id definido")
+		}
+	}
+
+	// Constrói o documento de update
+	doc, err := buildPartialUpdate(model)
+	if err != nil {
+		return "", false, err
+	}
+
+	opts := options.Update().SetUpsert(true)
+	res, err := r.coll.UpdateOne(ctx, f, M{"$set": doc}, opts)
+	if err != nil {
+		return "", false, err
+	}
+
+	// Determina o ID retornado
+	var id string
+	isInsert := res.UpsertedCount > 0
+
+	if isInsert {
+		// Documento foi inserido
+		if oid, ok := res.UpsertedID.(primitive.ObjectID); ok {
+			id = oid.Hex()
+		} else {
+			return "", false, fmt.Errorf("erro ao converter ID do upsert")
+		}
+	} else {
+		// Documento foi atualizado - busca o ID existente
+		if oid, ok := f["_id"].(primitive.ObjectID); ok {
+			id = oid.Hex()
+		} else {
+			// Busca o documento para obter o ID
+			var existing M
+			err := r.coll.FindOne(ctx, f, options.FindOne().SetProjection(M{"_id": 1})).Decode(&existing)
+			if err != nil {
+				return "", false, fmt.Errorf("erro ao buscar ID do documento atualizado: %w", err)
+			}
+			if oid, ok := existing["_id"].(primitive.ObjectID); ok {
+				id = oid.Hex()
+			}
+		}
+	}
+
+	return id, isInsert, nil
+}
+
 // FindByID busca um único documento por ID com projeção opcional
 func (r *Repository[T]) FindByID(ctx context.Context, id string, p *ProjectBuilder) (*T, error) {
 	oid, err := primitive.ObjectIDFromHex(id)

@@ -185,6 +185,66 @@ Insere um documento e retorna o `_id` em formato hex string (ObjectID):
 id, err := users.InsertOne(ctx, &User{Name: "João"})
 ```
 
+### InsertOneAndUpdate (Upsert)
+
+Realiza um **upsert**: se o documento já existir (baseado no filtro), atualiza apenas os campos diferentes; se não existir, insere o documento completo.
+
+Retorna:
+- `id`: o ID do documento (inserido ou existente)
+- `isInsert`: `true` se foi uma inserção, `false` se foi uma atualização
+- `err`: erro, se houver
+
+**Exemplo 1: Upsert usando o `_id` do model**
+
+```go
+user := User{
+    ID:     primitive.NewObjectID(),
+    Name:   "Ana",
+    Age:    29,
+    Active: true,
+}
+
+// Se o documento com esse _id já existir, atualiza; senão, insere
+id, isInsert, err := users.InsertOneAndUpdate(ctx, nil, &user)
+if err != nil {
+    log.Fatal(err)
+}
+
+if isInsert {
+    fmt.Println("Documento inserido com ID:", id)
+} else {
+    fmt.Println("Documento atualizado com ID:", id)
+}
+```
+
+**Exemplo 2: Upsert usando filtro customizado**
+
+```go
+// Busca por email único e insere/atualiza
+user := User{Name: "Ana", Email: "ana@email.com", Age: 30}
+
+id, isInsert, err := users.InsertOneAndUpdate(ctx,
+    monger.Filter().Eq("email", "ana@email.com"),
+    &user,
+)
+```
+
+**Exemplo 3: Sincronização de dados externos**
+
+```go
+// Ideal para sincronizar dados de APIs externas
+// Se o produto já existir (pelo SKU), atualiza o preço e estoque;
+// senão, insere o produto completo
+product := Product{SKU: "ABC123", Name: "Notebook", Price: 2999.90, Stock: 50}
+
+id, isInsert, err := products.InsertOneAndUpdate(ctx,
+    monger.Filter().Eq("sku", "ABC123"),
+    &product,
+)
+```
+
+> **Nota:** Apenas campos não-zerados são atualizados (mesma regra do `UpdateByID`). Para atualizar valores zerados (`0`, `""`, `false`), use um *patch struct* com campos ponteiro.
+
 ### FindByID
 
 Busca um documento pelo `_id` (hex). Aceita projeção opcional:
