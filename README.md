@@ -194,18 +194,21 @@ Retorna:
 - `isInsert`: `true` se foi uma inserção, `false` se foi uma atualização
 - `err`: erro, se houver
 
-**Exemplo 1: Upsert usando o `_id` do model**
+> **Quando usar cada função:**
+> - Para **inserir** novos documentos: use `InsertOne`.
+> - Para **atualizar** por `_id`: use `UpdateByID`.
+> - Para **upsert** por campo único (ex: email, cpf, sku): use `InsertOneAndUpdate`.
+
+**Exemplo 1: Upsert por email**
 
 ```go
-user := User{
-    ID:     primitive.NewObjectID(),
-    Name:   "Ana",
-    Age:    29,
-    Active: true,
-}
+// Busca por email único e insere/atualiza
+user := User{Name: "Ana", Email: "ana@email.com", Age: 30}
 
-// Se o documento com esse _id já existir, atualiza; senão, insere
-id, isInsert, err := users.InsertOneAndUpdate(ctx, nil, &user)
+id, isInsert, err := users.InsertOneAndUpdate(ctx,
+    monger.Filter().Eq("email", "ana@email.com"),
+    &user,
+)
 if err != nil {
     log.Fatal(err)
 }
@@ -217,19 +220,7 @@ if isInsert {
 }
 ```
 
-**Exemplo 2: Upsert usando filtro customizado**
-
-```go
-// Busca por email único e insere/atualiza
-user := User{Name: "Ana", Email: "ana@email.com", Age: 30}
-
-id, isInsert, err := users.InsertOneAndUpdate(ctx,
-    monger.Filter().Eq("email", "ana@email.com"),
-    &user,
-)
-```
-
-**Exemplo 3: Sincronização de dados externos**
+**Exemplo 2: Sincronização de dados externos**
 
 ```go
 // Ideal para sincronizar dados de APIs externas
@@ -243,7 +234,8 @@ id, isInsert, err := products.InsertOneAndUpdate(ctx,
 )
 ```
 
-> **Nota:** Apenas campos não-zerados são atualizados (mesma regra do `UpdateByID`). Para atualizar valores zerados (`0`, `""`, `false`), use um *patch struct* com campos ponteiro.
+> **Nota:** O filtro é **obrigatório** e deve usar um campo único (ex: `email`, `cpf`, `sku`).
+> Apenas campos não-zerados são atualizados (mesma regra do `UpdateByID`). Para atualizar valores zerados (`0`, `""`, `false`), use um *patch struct* com campos ponteiro.
 
 ### FindByID
 

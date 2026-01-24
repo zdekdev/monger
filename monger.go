@@ -190,42 +190,25 @@ func (r *Repository[T]) InsertOne(ctx context.Context, model *T) (string, error)
 //
 // Parâmetros:
 //   - ctx: contexto da operação
-//   - filter: filtro para identificar o documento (use FilterBuilder ou nil para filtrar pelo _id do model)
+//   - filter: filtro para identificar o documento (obrigatório, use FilterBuilder com um campo único como email, cpf, etc.)
 //   - model: documento a ser inserido ou usado para atualização
 //
 // Retorna o ID do documento (inserido ou existente) e um booleano indicando se foi uma inserção (true) ou atualização (false).
+//
+// Nota: Para inserir novos documentos, use InsertOne. Para atualizar por _id, use UpdateByID.
+// Use InsertOneAndUpdate apenas para upsert por campos únicos (ex: email, cpf, sku).
 func (r *Repository[T]) InsertOneAndUpdate(ctx context.Context, filter *FilterBuilder, model *T) (string, bool, error) {
+	if filter == nil {
+		return "", false, fmt.Errorf("filter é obrigatório")
+	}
 	if model == nil {
 		return "", false, fmt.Errorf("model não pode ser nil")
 	}
 
 	// Monta o filtro
-	f := M{}
-	if filter != nil {
-		f = filter.Build()
-	} else {
-		// Tenta extrair o _id do model via reflection
-		v := reflect.ValueOf(model)
-		if v.Kind() == reflect.Pointer {
-			v = v.Elem()
-		}
-		if v.Kind() == reflect.Struct {
-			t := v.Type()
-			for i := 0; i < v.NumField(); i++ {
-				sf := t.Field(i)
-				tag, _ := parseBsonTag(sf.Tag.Get("bson"))
-				if tag == "_id" || (tag == "" && sf.Name == "ID") {
-					fv := v.Field(i)
-					if !fv.IsZero() {
-						f["_id"] = fv.Interface()
-					}
-					break
-				}
-			}
-		}
-		if len(f) == 0 {
-			return "", false, fmt.Errorf("filter é obrigatório quando o model não possui _id definido")
-		}
+	f := filter.Build()
+	if len(f) == 0 {
+		return "", false, fmt.Errorf("filter não pode ser vazio")
 	}
 
 	// Constrói o documento de update
