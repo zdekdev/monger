@@ -277,6 +277,41 @@ allClients, err := users.FindAll(ctx, nil, nil, 1000)
 allClients, err = users.FindAll(ctx, nil, nil, 0)
 ```
 
+**Encadeando múltiplos campos no filtro:**
+
+O `FilterBuilder` suporta encadeamento de múltiplos campos. A busca fuzzy é aplicada apenas em campos `string`; outros tipos (`bool`, `int`, `time.Time`, `ObjectID`) usam igualdade exata.
+
+```go
+// Buscar por nome E data de nascimento
+clients, err := users.FindAll(ctx, 
+    monger.Filter().
+        Eq("name", "João").           // fuzzy match no nome
+        Eq("birthDate", someDate),    // match exato na data
+    nil, 
+    100,
+)
+
+// Buscar por nome E cidade E status ativo
+clients, err = users.FindAll(ctx,
+    monger.Filter().
+        Eq("name", "Maria").
+        Eq("city", "São Paulo").
+        Eq("active", true),
+    nil,
+    50,
+)
+
+// Busca complexa com operadores lógicos (OR)
+clients, err = users.FindAll(ctx,
+    monger.Filter().Or(
+        monger.Filter().Eq("name", "João").Eq("city", "Rio"),
+        monger.Filter().Eq("name", "Maria").Eq("city", "SP"),
+    ),
+    nil,
+    100,
+)
+```
+
 **Parâmetros:**
 - `ctx`: contexto da operação
 - `f`: filtro (opcional, se `nil` retorna todos os documentos)
@@ -286,21 +321,7 @@ allClients, err = users.FindAll(ctx, nil, nil, 0)
 > **Importante:** Para buscas em grandes coleções, sempre defina um limite razoável para evitar sobrecarga do servidor.
 > A busca fuzzy só é aplicada em campos string; campos não-string (como `bool`, `int`, `ObjectID`) usam igualdade exata.
 
-### Count
 
-Conta documentos que satisfazem um filtro:
-
-```go
-total, err := users.Count(ctx, monger.Filter().Eq("active", true))
-```
-
-### Exists
-
-Retorna `true` se existir ao menos um documento que satisfaça o filtro:
-
-```go
-ok, err := users.Exists(ctx, monger.Filter().Eq("email", "a@b.com"))
-```
 
 ### FindPaged (paginação + sort)
 
@@ -333,6 +354,23 @@ res, err = users.FindPaged(
 	20, // limit
 	monger.D{{Key: "name", Value: 1}}, // sort asc por nome
 )
+```
+
+
+### Count
+
+Conta documentos que satisfazem um filtro:
+
+```go
+total, err := users.Count(ctx, monger.Filter().Eq("active", true))
+```
+
+### Exists
+
+Retorna `true` se existir ao menos um documento que satisfaça o filtro:
+
+```go
+ok, err := users.Exists(ctx, monger.Filter().Eq("email", "a@b.com"))
 ```
 
 ### UpdateByID (update parcial)
