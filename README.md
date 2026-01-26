@@ -80,19 +80,23 @@ func main() {
 	}
 	fmt.Println("inserted id:", id)
 
-	// Find by id (com projeção opcional)
-	found, err := users.FindByID(ctx, id, monger.Select("name", "age"))
+	// Converter string ID para ObjectID
+	oid, _ := primitive.ObjectIDFromHex(id)
+
+	// Find por ID (com projeção opcional)
+	found, err := users.Find(ctx, monger.Filter().Eq("_id", oid), monger.Select("name", "age"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("found: %+v\n", found)
 
-	// Find com filtro
-	list, err := users.Find(ctx,
+	// FindAll com filtro (busca fuzzy)
+	list, err := users.FindAll(ctx,
 		monger.Filter().
 			Eq("active", true).
 			Gte("age", 18),
 		nil,
+		100, // limite de resultados
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -237,33 +241,50 @@ id, isInsert, err := products.InsertOneAndUpdate(ctx,
 > **Nota:** O filtro é **obrigatório** e deve usar um campo único (ex: `email`, `cpf`, `sku`).
 > Apenas campos não-zerados são atualizados (mesma regra do `UpdateByID`). Para atualizar valores zerados (`0`, `""`, `false`), use um *patch struct* com campos ponteiro.
 
-### FindByID
-
-Busca um documento pelo `_id` (hex). Aceita projeção opcional:
-
-```go
-u, err := users.FindByID(ctx, id, nil)
-u2, err := users.FindByID(ctx, id, monger.Select("name"))
-```
-
 ### Find
 
-Busca múltiplos documentos com filtro/projeção:
+Busca um único documento com filtro. Ideal para buscas por campos únicos como `_id`, `cpf`, `email`, etc.
+O filtro é **obrigatório** para evitar retornar documentos aleatórios.
 
 ```go
-list, err := users.Find(ctx,
-	monger.Filter().Eq("active", true),
-	monger.Exclude("passwordHash"),
-)
+// Buscar por ID (converta a string para ObjectID primeiro)
+oid, _ := primitive.ObjectIDFromHex(id)
+u, err := users.Find(ctx, monger.Filter().Eq("_id", oid), nil)
+
+// Buscar por CPF
+u, err = users.Find(ctx, monger.Filter().Eq("cpf", "12345678900"), nil)
+
+// Buscar por email com projeção
+u, err = users.Find(ctx, monger.Filter().Eq("email", "ana@email.com"), monger.Select("name", "email"))
 ```
 
 ### FindAll
 
-Atalho para retornar todos os documentos:
+Busca múltiplos documentos com filtro e projeção. Usa busca **fuzzy** (regex case-insensitive) para campos string, permitindo encontrar documentos mesmo com erros de digitação ou nomes parciais.
 
 ```go
-list, err := users.FindAll(ctx)
+// Buscar clientes por nome (fuzzy match)
+// Retorna: "João Silva", "João Pedro", "Maria João", etc.
+clients, err := users.FindAll(ctx, monger.Filter().Eq("name", "João"), nil, 100)
+
+// Buscar todos os ativos com limite
+clients, err = users.FindAll(ctx, monger.Filter().Eq("active", true), nil, 50)
+
+// Buscar todos sem filtro (com limite para segurança)
+allClients, err := users.FindAll(ctx, nil, nil, 1000)
+
+// Buscar todos sem limite (cuidado com performance em grandes coleções!)
+allClients, err = users.FindAll(ctx, nil, nil, 0)
 ```
+
+**Parâmetros:**
+- `ctx`: contexto da operação
+- `f`: filtro (opcional, se `nil` retorna todos os documentos)
+- `p`: projeção (opcional)
+- `limit`: limite de resultados (use `0` para sem limite - **use com cuidado!**)
+
+> **Importante:** Para buscas em grandes coleções, sempre defina um limite razoável para evitar sobrecarga do servidor.
+> A busca fuzzy só é aplicada em campos string; campos não-string (como `bool`, `int`, `ObjectID`) usam igualdade exata.
 
 ### Count
 
@@ -284,8 +305,10 @@ ok, err := users.Exists(ctx, monger.Filter().Eq("email", "a@b.com"))
 ### FindPaged (paginação + sort)
 
 Retorna `PagedResult[T]` com `Data` e `Total` (total de documentos do filtro, sem paginação).
+Se o filtro for `nil`, retorna todos os documentos respeitando a paginação.
 
 ```go
+// Com filtro
 res, err := users.FindPaged(
 	ctx,
 	monger.Filter().Eq("active", true),
@@ -300,6 +323,16 @@ if err != nil {
 
 fmt.Println("total:", res.Total)
 fmt.Println("page size:", len(res.Data))
+
+// Sem filtro (lista todos os documentos paginados)
+res, err = users.FindPaged(
+	ctx,
+	nil, // sem filtro - retorna todos
+	nil,
+	0,  // skip
+	20, // limit
+	monger.D{{Key: "name", Value: 1}}, // sort asc por nome
+)
 ```
 
 ### UpdateByID (update parcial)

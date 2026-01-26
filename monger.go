@@ -275,27 +275,72 @@ func (r *Repository[T]) InsertOneAndUpdate(ctx context.Context, filter *FilterBu
 	return id, isInsert, nil
 }
 
-// FindByID busca um único documento por ID com projeção opcional
-func (r *Repository[T]) FindByID(ctx context.Context, id string, p *ProjectBuilder) (*T, error) {
-	oid, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return nil, fmt.Errorf("id inválido: %w", err)
+// Find busca um único documento com filtro e projeção.
+// Ideal para buscas por campos únicos como _id, cpf, email, etc.
+// O filtro é obrigatório para evitar retornar documentos aleatórios.
+//
+// Exemplo de uso:
+//
+//	// Buscar por ID
+//	user, err := users.Find(ctx, monger.Filter().Eq("_id", oid), nil)
+//
+//	// Buscar por CPF
+//	user, err := users.Find(ctx, monger.Filter().Eq("cpf", "12345678900"), nil)
+//
+//	// Buscar por email com projeção
+//	user, err := users.Find(ctx, monger.Filter().Eq("email", "ana@email.com"), monger.Select("name", "email"))
+func (r *Repository[T]) Find(ctx context.Context, f *FilterBuilder, p *ProjectBuilder) (*T, error) {
+	if f == nil {
+		return nil, fmt.Errorf("filtro é obrigatório para Find; use FindAll para buscar múltiplos documentos")
 	}
+	filter := f.Build()
 	opts := options.FindOne()
 	if p != nil {
 		opts.SetProjection(p.Build())
 	}
 	var res T
-	err = r.coll.FindOne(ctx, M{"_id": oid}, opts).Decode(&res)
+	err := r.coll.FindOne(ctx, filter, opts).Decode(&res)
 	if err != nil {
 		return nil, err
 	}
 	return &res, nil
 }
 
-// Find busca múltiplos documentos com filtro e projeção
-func (r *Repository[T]) Find(ctx context.Context, f *FilterBuilder, p *ProjectBuilder) ([]T, error) {
-	filter, opts := r.getOpts(f, p)
+// FindAll busca múltiplos documentos com filtro e projeção.
+// O filtro usa busca "fuzzy" (regex case-insensitive) para campos string,
+// permitindo encontrar documentos mesmo com erros de digitação ou nomes parciais.
+//
+// Parâmetros:
+//   - ctx: contexto da operação
+//   - f: filtro (opcional, se nil retorna todos os documentos)
+//   - p: projeção (opcional)
+//   - limit: limite de resultados (use 0 para sem limite - use com cuidado!)
+//
+// Exemplo de uso:
+//
+//	// Buscar clientes por nome (fuzzy match)
+//	clients, err := users.FindAll(ctx, monger.Filter().Eq("name", "João"), nil, 100)
+//	// Retorna: "João Silva", "João Pedro", "Maria João", etc.
+//
+//	// Buscar todos os ativos com limite
+//	clients, err := users.FindAll(ctx, monger.Filter().Eq("active", true), nil, 50)
+//
+//	// Buscar todos sem limite (cuidado com performance!)
+//	allClients, err := users.FindAll(ctx, nil, nil, 0)
+func (r *Repository[T]) FindAll(ctx context.Context, f *FilterBuilder, p *ProjectBuilder, limit int64) ([]T, error) {
+	filter := M{}
+	if f != nil {
+		filter = convertToFuzzyFilter(f.Build())
+	}
+
+	opts := options.Find()
+	if p != nil {
+		opts.SetProjection(p.Build())
+	}
+	if limit > 0 {
+		opts.SetLimit(limit)
+	}
+
 	cursor, err := r.coll.Find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
@@ -308,9 +353,56 @@ func (r *Repository[T]) Find(ctx context.Context, f *FilterBuilder, p *ProjectBu
 	return results, nil
 }
 
-// FindAll retorna todos os documentos da coleção
-func (r *Repository[T]) FindAll(ctx context.Context) ([]T, error) {
-	return r.Find(ctx, nil, nil)
+// convertToFuzzyFilter converte valores string em regex case-insensitive
+// para permitir buscas parciais e tolerantes a erros.
+func convertToFuzzyFilter(filter M) M {
+	result := M{}
+	for k, v := range filter {
+		switch val := v.(type) {
+		case string:
+			// Converte strings em regex case-insensitive para busca fuzzy
+			// Escapa caracteres especiais de regex e permite match parcial
+			escaped := escapeRegex(val)
+			result[k] = primitive.Regex{Pattern: escaped, Options: "i"}
+		case M:
+			// Recursivamente processa sub-documentos, mas não converte operadores
+			if isOperatorDocument(val) {
+				result[k] = val
+			} else {
+				result[k] = convertToFuzzyFilter(val)
+			}
+		case []M:
+			// Para $and, $or, etc.
+			converted := make([]M, len(val))
+			for i, item := range val {
+				converted[i] = convertToFuzzyFilter(item)
+			}
+			result[k] = converted
+		default:
+			result[k] = v
+		}
+	}
+	return result
+}
+
+// isOperatorDocument verifica se um documento M contém operadores MongoDB ($gt, $lt, etc.)
+func isOperatorDocument(m M) bool {
+	for k := range m {
+		if strings.HasPrefix(k, "$") {
+			return true
+		}
+	}
+	return false
+}
+
+// escapeRegex escapa caracteres especiais de regex
+func escapeRegex(s string) string {
+	specialChars := []string{"\\", ".", "+", "*", "?", "^", "$", "(", ")", "[", "]", "{", "}", "|", "-"}
+	result := s
+	for _, char := range specialChars {
+		result = strings.ReplaceAll(result, char, "\\"+char)
+	}
+	return result
 }
 
 // Count conta documentos baseados em um filtro
@@ -332,15 +424,44 @@ func (r *Repository[T]) Exists(ctx context.Context, f *FilterBuilder) (bool, err
 	return count > 0, err
 }
 
-// FindPaged realiza busca com paginação, ordenação e projeção
+// FindPaged realiza busca com paginação, ordenação e projeção.
+// Se o filtro for nil, retorna todos os documentos respeitando a paginação.
+//
+// Parâmetros:
+//   - ctx: contexto da operação
+//   - f: filtro (opcional, se nil retorna todos os documentos)
+//   - p: projeção (opcional)
+//   - skip: número de documentos a pular
+//   - limit: número máximo de documentos a retornar
+//   - sort: ordenação (use monger.D para preservar ordem)
+//
+// Exemplo de uso:
+//
+//	// Listar todos os usuários paginados
+//	res, err := users.FindPaged(ctx, nil, nil, 0, 10, monger.D{{Key: "name", Value: 1}})
+//
+//	// Listar usuários ativos paginados
+//	res, err := users.FindPaged(ctx, monger.Filter().Eq("active", true), nil, 0, 10, nil)
 func (r *Repository[T]) FindPaged(ctx context.Context, f *FilterBuilder, p *ProjectBuilder, skip, limit int64, sort D) (*PagedResult[T], error) {
-	filter, opts := r.getOpts(f, p)
+	filter := M{}
+	if f != nil {
+		filter = f.Build()
+	}
+
 	total, err := r.coll.CountDocuments(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
 
-	opts.SetLimit(limit).SetSkip(skip).SetSort(sort)
+	opts := options.Find()
+	if p != nil {
+		opts.SetProjection(p.Build())
+	}
+	opts.SetLimit(limit).SetSkip(skip)
+	if sort != nil {
+		opts.SetSort(sort)
+	}
+
 	cursor, err := r.coll.Find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
