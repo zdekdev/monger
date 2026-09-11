@@ -128,7 +128,7 @@ Resultado (`res[0]`):
 
 ## JoinCollection
 
-> **Deprecated:** `JoinCollection`/`NewJoinCollection` serão removidos na próxima versão.
+> **Deprecated:** `JoinCollection`/`NewJoinCollection` serão removidos na v2.0.0.
 > Prefira [Join encadeado com `Query`](#join-encadeado-com-query-recomendado) e `Ref`.
 
 Representa uma coleção a ser unida. Use `NewJoinCollection` para criar a partir de um Repository:
@@ -148,7 +148,7 @@ Parâmetros:
 
 ## Join
 
-> **Deprecated:** será removido na próxima versão.
+> **Deprecated:** será removido na v2.0.0.
 > Prefira [Join encadeado com `Query`](#join-encadeado-com-query-recomendado).
 
 Busca um documento em cada coleção que contenha o valor comum e retorna um único documento mesclado:
@@ -193,7 +193,7 @@ result, err := monger.Join(ctx, "12345678900",
 
 ## JoinAll
 
-> **Deprecated:** será removido na próxima versão.
+> **Deprecated:** será removido na v2.0.0.
 > Prefira [Join encadeado com `Query`](#join-encadeado-com-query-recomendado).
 
 Similar ao `Join`, mas retorna **todos** os documentos encontrados em cada coleção (útil para relações 1:N):

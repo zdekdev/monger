@@ -11,7 +11,7 @@ import (
 
 // JoinCollection representa uma coleção a ser unida no Join.
 //
-// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na próxima versão.
+// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na v2.0.0.
 type JoinCollection struct {
 	Collection *mongo.Collection // Coleção do MongoDB
 	Field      string            // Campo local a ser usado na junção (pode ser diferente do campo comum)
@@ -20,7 +20,7 @@ type JoinCollection struct {
 
 // NewJoinCollection cria uma JoinCollection a partir de um Repository.
 //
-// Deprecated: use Ref com Query.Join. Será removido na próxima versão.
+// Deprecated: use Ref com Query.Join. Será removido na v2.0.0.
 func NewJoinCollection[T any](repo *Repository[T], field string, alias string) JoinCollection {
 	return JoinCollection{
 		Collection: repo.coll,
@@ -45,7 +45,7 @@ func NewJoinCollection[T any](repo *Repository[T], field string, alias string) J
 //	    monger.NewJoinCollection(addressRepo, "ownerCpf", "address"),
 //	)
 //
-// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na próxima versão.
+// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na v2.0.0.
 func Join(ctx context.Context, commonValue any, collections ...JoinCollection) (*JoinResult, error) {
 	if len(collections) == 0 {
 		return nil, fmt.Errorf("pelo menos uma coleção é necessária")
@@ -105,7 +105,7 @@ func Join(ctx context.Context, commonValue any, collections ...JoinCollection) (
 //	    monger.NewJoinCollection(ordersRepo, "customerCpf", "orders"), // pode ter múltiplos pedidos
 //	)
 //
-// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na próxima versão.
+// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na v2.0.0.
 func JoinAll(ctx context.Context, commonValue any, collections ...JoinCollection) (*JoinResult, error) {
 	if len(collections) == 0 {
 		return nil, fmt.Errorf("pelo menos uma coleção é necessária")
