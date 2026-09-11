@@ -434,6 +434,26 @@ err = users.UpdateByID(ctx, id, monger.D{
 })
 ```
 
+**4) Modo "estado final" com `monger.IncludeZeroValues()`:** para updates via struct, inclui
+também os campos zerados (`0`, `""`, `false`). Campos marcados com `bson:"...,omitempty"` e
+ponteiros `nil` continuam sendo omitidos.
+
+```go
+type User struct {
+	Name     string `bson:"name"`
+	Age      int    `bson:"age"`
+	Active   bool   `bson:"active"`
+	Nickname string `bson:"nickname,omitempty"` // omitido se estiver vazio
+}
+
+// Name e Age são gravados (Age = 0), Active = false é gravado,
+// Nickname vazio é omitido por causa do omitempty.
+err := users.UpdateByID(ctx, id, &User{Name: "Ana", Active: false},
+	monger.IncludeZeroValues())
+```
+
+Sem `IncludeZeroValues()`, o default continua omitindo todos os zerados (update parcial seguro).
+
 > Observação: no caminho via struct ou via mapa **sem operador**, o campo `_id` é ignorado.
 > Em documentos com operador (`$set`, `$unset`, ...), o `_id` é de responsabilidade do caller.
 

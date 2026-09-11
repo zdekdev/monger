@@ -233,7 +233,7 @@ func (r *Repository[T]) InsertOneAndUpdate(ctx context.Context, filter *FilterBu
 	}
 
 	// Constrói o documento de update
-	doc, err := buildPartialUpdate(model)
+	doc, err := buildPartialUpdate(model, false)
 	if err != nil {
 		return "", false, err
 	}
@@ -479,22 +479,24 @@ func (r *Repository[T]) FindPaged(ctx context.Context, f *FilterBuilder, p *Proj
 	}, nil
 }
 
-func parseBsonTag(tag string) (name string, inline bool) {
+func parseBsonTag(tag string) (name string, inline, omitempty bool) {
 	if tag == "" {
-		return "", false
+		return "", false, false
 	}
 	parts := strings.Split(tag, ",")
 	name = parts[0]
 	for _, opt := range parts[1:] {
-		if opt == "inline" {
+		switch opt {
+		case "inline":
 			inline = true
-			break
+		case "omitempty":
+			omitempty = true
 		}
 	}
-	return name, inline
+	return name, inline, omitempty
 }
 
-func buildPartialUpdate(doc any) (M, error) {
+func buildPartialUpdate(doc any, includeZero bool) (M, error) {
 	v := reflect.ValueOf(doc)
 	if !v.IsValid() {
 		return M{}, nil
@@ -517,14 +519,14 @@ func buildPartialUpdate(doc any) (M, error) {
 			continue
 		}
 
-		tag, inline := parseBsonTag(sf.Tag.Get("bson"))
+		tag, inline, omitempty := parseBsonTag(sf.Tag.Get("bson"))
 		if tag == "-" {
 			continue
 		}
 
 		fv := v.Field(i)
 		if inline || (sf.Anonymous && (fv.Kind() == reflect.Struct || (fv.Kind() == reflect.Pointer && fv.Elem().Kind() == reflect.Struct))) {
-			sub, err := buildPartialUpdate(fv.Interface())
+			sub, err := buildPartialUpdate(fv.Interface(), includeZero)
 			if err != nil {
 				return nil, err
 			}
@@ -542,8 +544,8 @@ func buildPartialUpdate(doc any) (M, error) {
 			continue
 		}
 
-		// Regra: só inclui campos "não-zerados".
-		// Para conseguir setar valores zerados (0, "", false), use ponteiros (*int, *string, *bool) no seu model.
+		// Ponteiros e interfaces:
+		//   nil  -> não altera o campo; não-nil -> inclui (mesmo que aponte para valor zerado).
 		if fv.Kind() == reflect.Pointer || fv.Kind() == reflect.Interface {
 			if fv.IsNil() {
 				continue
@@ -555,7 +557,14 @@ func buildPartialUpdate(doc any) (M, error) {
 			update[name] = fv.Interface()
 			continue
 		}
+
+		// Valores concretos zerados (0, "", false):
+		//   default          -> omite;
+		//   includeZero      -> inclui, exceto se marcado com bson:"...,omitempty".
 		if fv.IsZero() {
+			if includeZero && !omitempty {
+				update[name] = fv.Interface()
+			}
 			continue
 		}
 		update[name] = fv.Interface()
@@ -563,13 +572,29 @@ func buildPartialUpdate(doc any) (M, error) {
 	return update, nil
 }
 
+// UpdateOption configura o comportamento de UpdateByID.
+type UpdateOption func(*updateConfig)
+
+type updateConfig struct {
+	includeZero bool
+}
+
+// IncludeZeroValues faz o update incluir também campos com valor zerado (0, "", false)
+// ao receber um struct. Campos marcados com bson:"...,omitempty" e ponteiros nil continuam
+// sendo omitidos.
+//
+// Sem esta opção, o default é omitir campos zerados (update parcial seguro).
+func IncludeZeroValues() UpdateOption {
+	return func(c *updateConfig) { c.includeZero = true }
+}
+
 // buildUpdateDocument converte o argumento de update em um documento de update do MongoDB.
 //
 // Aceita:
-//   - struct / *struct: monta $set com os campos não-zerados (via buildPartialUpdate).
+//   - struct / *struct: monta $set com os campos via buildPartialUpdate (respeitando opts).
 //   - M (bson.M) ou D (bson.D) SEM operador ($): envolvidos em $set (o campo _id é removido).
 //   - M (bson.M) ou D (bson.D) COM operador ($set, $unset, $inc, $push, ...): usados como documento cru.
-func buildUpdateDocument(update any) (any, error) {
+func buildUpdateDocument(update any, opts ...UpdateOption) (any, error) {
 	if update == nil {
 		return nil, fmt.Errorf("update não pode ser nil")
 	}
@@ -613,7 +638,14 @@ func buildUpdateDocument(update any) (any, error) {
 		return D{{Key: "$set", Value: set}}, nil
 	}
 
-	doc, err := buildPartialUpdate(update)
+	cfg := updateConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
+	doc, err := buildPartialUpdate(update, cfg.includeZero)
 	if err != nil {
 		return nil, err
 	}
@@ -658,14 +690,21 @@ func isOperatorD(d D) bool {
 //     // Com operador: usado como documento de update cru ($set, $unset, $inc, ...).
 //     err := users.UpdateByID(ctx, id, M{"$set": M{"username": ""}, "$unset": M{"old": ""}})
 //
+//  4. Modo "estado final" (opt-in) com IncludeZeroValues:
+//
+//     // Inclui também campos zerados do struct, exceto ponteiros nil
+//     // e campos marcados com bson:"...,omitempty".
+//     err := users.UpdateByID(ctx, id, &User{Name: "Ana", Active: false},
+//     monger.IncludeZeroValues())
+//
 // Nota: no caminho via struct, o campo _id é sempre ignorado.
-func (r *Repository[T]) UpdateByID(ctx context.Context, id string, update any) error {
+func (r *Repository[T]) UpdateByID(ctx context.Context, id string, update any, opts ...UpdateOption) error {
 	oid, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
 		return err
 	}
 
-	updateDoc, err := buildUpdateDocument(update)
+	updateDoc, err := buildUpdateDocument(update, opts...)
 	if err != nil {
 		return err
 	}
