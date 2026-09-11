@@ -563,30 +563,114 @@ func buildPartialUpdate(doc any) (M, error) {
 	return update, nil
 }
 
-// UpdateByID faz update parcial do documento (UpdateOne + $set).
+// buildUpdateDocument converte o argumento de update em um documento de update do MongoDB.
 //
-// Por padrão, só inclui campos não-zerados do struct.
-// Para setar valores zerados (0, "", false), use um "patch struct" com campos ponteiro (*int, *string, *bool, etc.).
+// Aceita:
+//   - struct / *struct: monta $set com os campos não-zerados (via buildPartialUpdate).
+//   - M (bson.M) ou D (bson.D) SEM operador ($): envolvidos em $set (o campo _id é removido).
+//   - M (bson.M) ou D (bson.D) COM operador ($set, $unset, $inc, $push, ...): usados como documento cru.
+func buildUpdateDocument(update any) (any, error) {
+	if update == nil {
+		return nil, fmt.Errorf("update não pode ser nil")
+	}
+
+	switch u := update.(type) {
+	case M:
+		if len(u) == 0 {
+			return nil, fmt.Errorf("nenhum campo para atualizar")
+		}
+		if isOperatorDocument(u) {
+			return u, nil
+		}
+		set := M{}
+		for k, v := range u {
+			if k == "_id" {
+				continue
+			}
+			set[k] = v
+		}
+		if len(set) == 0 {
+			return nil, fmt.Errorf("nenhum campo para atualizar")
+		}
+		return M{"$set": set}, nil
+	case D:
+		if len(u) == 0 {
+			return nil, fmt.Errorf("nenhum campo para atualizar")
+		}
+		if isOperatorD(u) {
+			return u, nil
+		}
+		set := D{}
+		for _, e := range u {
+			if e.Key == "_id" {
+				continue
+			}
+			set = append(set, e)
+		}
+		if len(set) == 0 {
+			return nil, fmt.Errorf("nenhum campo para atualizar")
+		}
+		return D{{Key: "$set", Value: set}}, nil
+	}
+
+	doc, err := buildPartialUpdate(update)
+	if err != nil {
+		return nil, err
+	}
+	if len(doc) == 0 {
+		return nil, fmt.Errorf("nenhum campo para atualizar")
+	}
+	delete(doc, "_id")
+	return M{"$set": doc}, nil
+}
+
+// isOperatorD verifica se um bson.D de update contém operadores MongoDB ($set, $unset, ...).
+func isOperatorD(d D) bool {
+	for _, e := range d {
+		if strings.HasPrefix(e.Key, "$") {
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateByID faz update parcial do documento (UpdateOne).
+//
+// Formas de uso:
+//
+//  1. Struct / *struct (padrão): usa $set apenas com campos não-zerados.
+//
+//     err := users.UpdateByID(ctx, id, &User{Name: "Novo Nome"})
+//
+//  2. "Patch struct" com ponteiros para setar valores zerados (0, "", false):
+//
+//     type UserPatch struct {
+//     Name   *string `bson:"name"`
+//     Active *bool   `bson:"active"`
+//     }
+//     err := users.UpdateByID(ctx, id, &UserPatch{Name: monger.Value(""), Active: monger.Value(false)})
+//
+//  3. Mapa (M) ou documento ordenado (D) para controle explícito do valor:
+//
+//     // Sem operador: envolvido em $set automaticamente.
+//     err := users.UpdateByID(ctx, id, M{"username": "", "host": "smtp.x"})
+//
+//     // Com operador: usado como documento de update cru ($set, $unset, $inc, ...).
+//     err := users.UpdateByID(ctx, id, M{"$set": M{"username": ""}, "$unset": M{"old": ""}})
+//
+// Nota: no caminho via struct, o campo _id é sempre ignorado.
 func (r *Repository[T]) UpdateByID(ctx context.Context, id string, update any) error {
 	oid, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
 		return err
 	}
 
-	if update == nil {
-		return fmt.Errorf("update não pode ser nil")
-	}
-
-	doc, err := buildPartialUpdate(update)
+	updateDoc, err := buildUpdateDocument(update)
 	if err != nil {
 		return err
 	}
-	if len(doc) == 0 {
-		return fmt.Errorf("nenhum campo para atualizar")
-	}
-	delete(doc, "_id")
 
-	_, err = r.coll.UpdateOne(ctx, M{"_id": oid}, M{"$set": doc})
+	_, err = r.coll.UpdateOne(ctx, M{"_id": oid}, updateDoc)
 	return err
 }
 

@@ -410,7 +410,32 @@ err = users.UpdateByID(ctx, id, &UserPatch{Age: monger.Value(0)})
 err = users.UpdateByID(ctx, id, &UserPatch{Name: monger.Value("")})
 ```
 
-> Observação: o campo `_id` é ignorado caso seja enviado no update.
+**3) Via `M`/`D` (raw):** para controle explícito, inclusive limpando campos (`""`, `0`, `false`).
+
+```go
+// Sem operador: o Monger envolve automaticamente em $set.
+// Útil para limpar campos sem precisar de um patch struct.
+err := users.UpdateByID(ctx, id, monger.M{
+	"username": "",
+	"host":     "smtp.x",
+})
+
+// Com operador: usado como documento de update cru.
+// Permite qualquer operador do MongoDB ($set, $unset, $inc, $push, ...).
+err = users.UpdateByID(ctx, id, monger.M{
+	"$set":   monger.M{"username": ""},
+	"$unset": monger.M{"legacy": ""},
+})
+
+// Também aceita bson.D (preserva a ordem dos campos).
+err = users.UpdateByID(ctx, id, monger.D{
+	{Key: "username", Value: ""},
+	{Key: "host", Value: "smtp.x"},
+})
+```
+
+> Observação: no caminho via struct ou via mapa **sem operador**, o campo `_id` é ignorado.
+> Em documentos com operador (`$set`, `$unset`, ...), o `_id` é de responsabilidade do caller.
 
 ### DeleteByID
 
