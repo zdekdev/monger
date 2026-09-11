@@ -713,6 +713,35 @@ func (r *Repository[T]) UpdateByID(ctx context.Context, id string, update any, o
 	return err
 }
 
+// UpdateBy atualiza documentos por um campo/valor (ex.: um campo único como cpf, email, sku)
+// em vez do _id. Aceita as mesmas formas de update do UpdateByID, incluindo UpdateOption.
+//
+// O campo e o update são obrigatórios. Retorna o número de documentos modificados.
+//
+// Exemplo:
+//
+//	// Atualiza o usuário cujo cpf é único
+//	n, err := users.UpdateBy(ctx, "cpf", "12345678900", monger.M{"email": "novo@x.com"})
+//
+//	// Com patch struct ou IncludeZeroValues
+//	n, err = users.UpdateBy(ctx, "email", "ana@x.com", &UserPatch{Name: monger.Value("")})
+func (r *Repository[T]) UpdateBy(ctx context.Context, field string, value any, update any, opts ...UpdateOption) (int64, error) {
+	if field == "" {
+		return 0, fmt.Errorf("field é obrigatório")
+	}
+
+	updateDoc, err := buildUpdateDocument(update, opts...)
+	if err != nil {
+		return 0, err
+	}
+
+	res, err := r.coll.UpdateOne(ctx, M{field: value}, updateDoc)
+	if err != nil {
+		return 0, err
+	}
+	return res.ModifiedCount, nil
+}
+
 // DeleteByID remove um documento por ID
 func (r *Repository[T]) DeleteByID(ctx context.Context, id string) error {
 	oid, err := primitive.ObjectIDFromHex(id)
