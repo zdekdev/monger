@@ -1,4 +1,4 @@
-# 📦 Monger
+# Monger
 
 Monger é um wrapper leve (e genérico) em Go para facilitar operações comuns com MongoDB usando o driver oficial (`go.mongodb.org/mongo-driver`).
 
@@ -29,7 +29,7 @@ Requisitos: Go 1.18+ e MongoDB acessível. Detalhes em [Instalação e Requisito
 
 ---
 
-## 📚 Documentação
+## Documentação
 
 A documentação foi organizada por categoria na pasta [`doc/`](doc/). Use o catálogo abaixo para navegar.
 
@@ -52,13 +52,13 @@ A documentação foi organizada por categoria na pasta [`doc/`](doc/). Use o cat
 
 | Documento | Descrição |
 |---|---|
-| [Repository[T]](doc/repository.md) | CRUD completo: `InsertOne`, `InsertOneAndUpdate`, `Find`, `FindAll`, `FindPaged`, `Count`, `Exists`, `UpdateByID`, `UpdateBy`, `DeleteByID`. |
+| [Repository[T]](doc/repository.md) | CRUD completo (`InsertOne`, `InsertOneAndUpdate`, `Find`, `FindAll`, `FindPaged`, `Count`, `Exists`, `UpdateByID`, `UpdateBy`, `DeleteByID`) e o builder `Query`. |
 
 ### Junções
 
 | Documento | Descrição |
 |---|---|
-| [Join](doc/join.md) | `Join`, `JoinAll`, `JoinWithLookup`, `JoinCollection` e `LookupConfig`. |
+| [Join](doc/join.md) | Join encadeado com `Query`, além de `Join`, `JoinAll`, `JoinWithLookup`, `JoinCollection`, `JoinRef`/`Ref` e `LookupConfig`. |
 
 ### Extras
 

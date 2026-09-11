@@ -752,6 +752,42 @@ func (r *Repository[T]) DeleteByID(ctx context.Context, id string) error {
 	return err
 }
 
+// --- QUERY BUILDER ---
+
+// Query encapsula um filtro e uma projeção para executar buscas encadeadas.
+// Os terminais (Find, FindAll, FindPaged, Join) reutilizam o mesmo filtro/projeção.
+type Query[T any] struct {
+	repo   *Repository[T]
+	filter *FilterBuilder
+	proj   *ProjectBuilder
+}
+
+// Query cria um builder de busca a partir de um filtro (opcional) e uma projeção (opcional).
+//
+// Exemplo:
+//
+//	result, err := users.Query(monger.Filter().Eq("active", true), nil).
+//	    FindAll(ctx, 100)
+func (r *Repository[T]) Query(f *FilterBuilder, p *ProjectBuilder) *Query[T] {
+	return &Query[T]{repo: r, filter: f, proj: p}
+}
+
+// Find busca um único documento usando o filtro/projeção da query.
+// O filtro é obrigatório (mesma regra de Repository.Find).
+func (q *Query[T]) Find(ctx context.Context) (*T, error) {
+	return q.repo.Find(ctx, q.filter, q.proj)
+}
+
+// FindAll busca múltiplos documentos usando o filtro/projeção da query.
+func (q *Query[T]) FindAll(ctx context.Context, limit int64) ([]T, error) {
+	return q.repo.FindAll(ctx, q.filter, q.proj, limit)
+}
+
+// FindPaged busca paginado usando o filtro/projeção da query.
+func (q *Query[T]) FindPaged(ctx context.Context, skip, limit int64, sort D) (*PagedResult[T], error) {
+	return q.repo.FindPaged(ctx, q.filter, q.proj, skip, limit, sort)
+}
+
 // --- JOIN (união de coleções) ---
 
 // JoinResult encapsula o resultado da união de múltiplas coleções
@@ -759,20 +795,197 @@ type JoinResult struct {
 	Data M `json:"data" bson:",inline"`
 }
 
-// JoinCollection representa uma coleção a ser unida no Join
+// JoinCollection representa uma coleção a ser unida no Join.
+//
+// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na próxima versão.
 type JoinCollection struct {
 	Collection *mongo.Collection // Coleção do MongoDB
 	Field      string            // Campo local a ser usado na junção (pode ser diferente do campo comum)
 	Alias      string            // Alias para os campos dessa coleção no resultado (opcional)
 }
 
-// NewJoinCollection cria uma JoinCollection a partir de um Repository
+// NewJoinCollection cria uma JoinCollection a partir de um Repository.
+//
+// Deprecated: use Ref com Query.Join. Será removido na próxima versão.
 func NewJoinCollection[T any](repo *Repository[T], field string, alias string) JoinCollection {
 	return JoinCollection{
 		Collection: repo.coll,
 		Field:      field,
 		Alias:      alias,
 	}
+}
+
+// JoinRef representa uma coleção a ser unida no Join encadeado (Query.Join).
+type JoinRef struct {
+	Collection   *mongo.Collection // Coleção do MongoDB
+	ForeignField string            // Campo da coleção externa que casa com o campo local
+	As           string            // Nome do campo no resultado (vazio => nome da coleção)
+}
+
+// Ref cria um JoinRef a partir de uma coleção (Repository), derivando o alias do
+// nome da coleção no MongoDB. Use o campo As para sobrescrever o alias.
+//
+// Exemplo:
+//
+//	monger.Ref(ordersRepo, "customerCpf") // As = "orders"
+//
+// Para um alias customizado:
+//
+//	ref := monger.Ref(ordersRepo, "customerCpf")
+//	ref.As = "pedidos"
+func Ref[T any](repo *Repository[T], foreignField string) JoinRef {
+	return JoinRef{
+		Collection:   repo.coll,
+		ForeignField: foreignField,
+		As:           repo.coll.Name(),
+	}
+}
+
+// Join executa a união de coleções usando o MESMO filtro/projeção da Query.
+//
+// Para cada documento base retornado pelo filtro, lê o valor de localField e busca,
+// em cada coleção de refs, os documentos cujo ForeignField casa com esse valor.
+//
+// Comportamento do vínculo (por ref):
+//   - 0 documentos  -> o campo As é omitido;
+//   - 1 documento   -> vira objeto;
+//   - >1 documentos -> vira array.
+//
+// Retorna uma lista de documentos mesclados (um por documento base), na mesma ordem
+// dos documentos base. A projeção da Query é aplicada aos documentos base (garantindo
+// o localField); os documentos unidos entram sob ref.As ou o nome da coleção.
+//
+// Exemplo:
+//
+//	res, err := users.
+//	    Query(monger.Filter().Eq("cpf", "12345678900"), nil).
+//	    Join(ctx, "cpf",
+//	        monger.Ref(ordersRepo, "customerCpf"),
+//	        monger.Ref(addressRepo, "ownerCpf"),
+//	    )
+func (q *Query[T]) Join(ctx context.Context, localField string, refs ...JoinRef) ([]M, error) {
+	if q.repo == nil {
+		return nil, fmt.Errorf("query sem repositório")
+	}
+	if localField == "" {
+		return nil, fmt.Errorf("localField é obrigatório")
+	}
+	if len(refs) == 0 {
+		return nil, fmt.Errorf("pelo menos uma coleção é necessária")
+	}
+	for _, ref := range refs {
+		if ref.Collection == nil {
+			return nil, fmt.Errorf("coleção não pode ser nil")
+		}
+		if ref.ForeignField == "" {
+			return nil, fmt.Errorf("ForeignField não pode ser vazio")
+		}
+	}
+
+	filter := M{}
+	if q.filter != nil {
+		filter = q.filter.Build()
+	}
+
+	opts := options.Find()
+	if q.proj != nil {
+		opts.SetProjection(joinProjection(q.proj.Build(), localField))
+	}
+
+	cursor, err := q.repo.coll.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var bases []M
+	if err := cursor.All(ctx, &bases); err != nil {
+		return nil, err
+	}
+
+	results := make([]M, 0, len(bases))
+	for _, base := range bases {
+		merged := M{}
+		for k, v := range base {
+			merged[k] = v
+		}
+
+		value, ok := base[localField]
+		if !ok {
+			results = append(results, merged)
+			continue
+		}
+
+		for _, ref := range refs {
+			as := ref.As
+			if as == "" {
+				as = ref.Collection.Name()
+			}
+
+			cur, err := ref.Collection.Find(ctx, M{ref.ForeignField: value})
+			if err != nil {
+				return nil, fmt.Errorf("erro ao buscar na coleção %s: %w", as, err)
+			}
+
+			var docs []M
+			if err := cur.All(ctx, &docs); err != nil {
+				cur.Close(ctx)
+				return nil, fmt.Errorf("erro ao decodificar a coleção %s: %w", as, err)
+			}
+			cur.Close(ctx)
+
+			switch len(docs) {
+			case 0:
+				// sem correspondência: omite o campo
+			case 1:
+				merged[as] = docs[0]
+			default:
+				merged[as] = docs
+			}
+		}
+
+		results = append(results, merged)
+	}
+
+	return results, nil
+}
+
+// joinProjection garante que localField esteja presente na projeção para que o
+// Join consiga ler o valor de junção dos documentos base.
+func joinProjection(p M, localField string) M {
+	out := M{}
+	inclusive := false
+	for _, v := range p {
+		if isProjectionOn(v) {
+			inclusive = true
+			break
+		}
+	}
+	for k, v := range p {
+		if !inclusive && k == localField {
+			continue // remove a exclusão do campo de junção
+		}
+		out[k] = v
+	}
+	if inclusive {
+		out[localField] = 1
+	}
+	return out
+}
+
+// isProjectionOn indica se um valor de projeção inclui o campo (1/true).
+func isProjectionOn(v any) bool {
+	switch n := v.(type) {
+	case int:
+		return n != 0
+	case int32:
+		return n != 0
+	case int64:
+		return n != 0
+	case bool:
+		return n
+	}
+	return false
 }
 
 // Join busca documentos em múltiplas coleções que compartilham um valor comum em um campo específico.
@@ -790,6 +1003,8 @@ func NewJoinCollection[T any](repo *Repository[T], field string, alias string) J
 //	    monger.NewJoinCollection(ordersRepo, "customerCpf", "orders"),
 //	    monger.NewJoinCollection(addressRepo, "ownerCpf", "address"),
 //	)
+//
+// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na próxima versão.
 func Join(ctx context.Context, commonValue any, collections ...JoinCollection) (*JoinResult, error) {
 	if len(collections) == 0 {
 		return nil, fmt.Errorf("pelo menos uma coleção é necessária")
@@ -848,6 +1063,8 @@ func Join(ctx context.Context, commonValue any, collections ...JoinCollection) (
 //	    monger.NewJoinCollection(usersRepo, "cpf", "user"),
 //	    monger.NewJoinCollection(ordersRepo, "customerCpf", "orders"), // pode ter múltiplos pedidos
 //	)
+//
+// Deprecated: use Query.Join com JoinRef (criado por Ref). Será removido na próxima versão.
 func JoinAll(ctx context.Context, commonValue any, collections ...JoinCollection) (*JoinResult, error) {
 	if len(collections) == 0 {
 		return nil, fmt.Errorf("pelo menos uma coleção é necessária")

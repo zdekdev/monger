@@ -6,9 +6,28 @@
 
 ## Criando um repositório
 
+Um `Repository[T]` é um *wrapper* de uma **coleção** do MongoDB:
+
 ```go
-users := monger.New[User](db, "users")
+users := monger.New[User](db, "users") // coleção "users"
 ```
+
+---
+
+## Query (busca encadeada)
+
+`Repository.Query` cria um builder que reaproveita o mesmo filtro/projeção em vários terminais:
+
+```go
+q := users.Query(monger.Filter().Eq("active", true), monger.Select("name", "cpf"))
+
+one, err := q.Find(ctx)                              // 1 documento
+many, err := q.FindAll(ctx, 100)                     // N documentos
+page, err := q.FindPaged(ctx, 0, 10, nil)            // paginado
+joined, err := q.Join(ctx, "cpf", monger.Ref(...))   // união de coleções
+```
+
+O terminal `Join` é detalhado em [Join](join.md).
 
 ---
 

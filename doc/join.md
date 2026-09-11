@@ -16,7 +16,120 @@ Importante: `Join`/`JoinAll` fazem buscas **coleção por coleção** (várias c
 
 ---
 
+## Join encadeado com `Query` (recomendado)
+
+A forma mais enxuta é encadear o `Join` a partir de `Repository.Query`, reaproveitando o
+**mesmo filtro** da busca. Assim você não repete o valor da chave nem monta `NewJoinCollection`.
+
+> **Nomenclatura:** cada `Repository[S]` é um *wrapper* de uma **coleção** do MongoDB.
+> Nos exemplos, `usersRepo`, `ordersRepo` e `addressRepo` são os repositórios das coleções
+> `users`, `orders` e `addresses`.
+
+### Criando as coleções (repositórios)
+
+```go
+type User struct {
+	ID   primitive.ObjectID `bson:"_id,omitempty"`
+	Name string             `bson:"name"`
+	CPF  string             `bson:"cpf"`
+}
+
+type Order struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty"`
+	CustomerCPF string             `bson:"customerCpf"`
+	Total       float64            `bson:"total"`
+}
+
+type Address struct {
+	ID       primitive.ObjectID `bson:"_id,omitempty"`
+	OwnerCPF string             `bson:"ownerCpf"`
+	Street   string             `bson:"street"`
+}
+
+// db é um *mongo.Database
+usersRepo   := monger.New[User](db, "users")         // coleção "users"
+ordersRepo  := monger.New[Order](db, "orders")       // coleção "orders"
+addressRepo := monger.New[Address](db, "addresses")  // coleção "addresses"
+```
+
+### Documentos de exemplo
+
+Coleção `users`:
+
+```json
+{ "_id": "...", "name": "Ana", "cpf": "12345678900" }
+```
+
+Coleção `orders` (vários pedidos com o mesmo `customerCpf`):
+
+```json
+{ "_id": "...", "customerCpf": "12345678900", "total": 100 }
+{ "_id": "...", "customerCpf": "12345678900", "total": 250 }
+```
+
+Coleção `addresses`:
+
+```json
+{ "_id": "...", "ownerCpf": "12345678900", "street": "Rua X" }
+```
+
+### Fazendo o join
+
+```go
+res, err := users.
+	Query(monger.Filter().Eq("cpf", "12345678900"), nil).
+	Join(ctx, "cpf",
+		monger.Ref(ordersRepo, "customerCpf"), // As = "orders" (nome da coleção)
+		monger.Ref(addressRepo, "ownerCpf"),   // As = "addresses"
+	)
+if err != nil {
+	log.Fatal(err)
+}
+
+// res é []monger.M — um documento por item da coleção base (users)
+fmt.Printf("%+v\n", res[0])
+```
+
+Resultado (`res[0]`):
+
+```json
+{
+  "_id": "...",
+  "name": "Ana",
+  "cpf": "12345678900",
+  "orders": [
+    { "_id": "...", "customerCpf": "12345678900", "total": 100 },
+    { "_id": "...", "customerCpf": "12345678900", "total": 250 }
+  ],
+  "addresses": { "_id": "...", "ownerCpf": "12345678900", "street": "Rua X" }
+}
+```
+
+### Regras
+
+- O `localField` (`"cpf"`) é o campo da **coleção base** que guarda a chave da união.
+- `monger.Ref(repo, foreignField)` deriva o `As` do **nome da coleção**. Para customizar o alias:
+
+  ```go
+  ref := monger.Ref(ordersRepo, "customerCpf")
+  ref.As = "pedidos"
+  ```
+
+- Vínculo por coleção: `0` documentos → campo omitido; `1` documento → objeto; `>1` → array.
+- Os documentos unidos vêm **completos** (o campo de junção, como `customerCpf`, permanece).
+- `Query.Join` retorna `[]monger.M` (um por documento base), na mesma ordem dos documentos base.
+- A projeção passada em `Query(f, p)` é aplicada aos documentos base; o `localField` é
+  incluído automaticamente nessa projeção.
+
+> Importante: `Query.Join` faz buscas **coleção por coleção** (como `Join`/`JoinAll`).
+> Para grandes volumes, prefira `JoinWithLookup`.
+
+---
+
 ## JoinCollection
+
+> **Deprecated:** `JoinCollection`/`NewJoinCollection` serão removidos na próxima versão.
+> Prefira [Join encadeado com `Query`](#join-encadeado-com-query-recomendado) e `Ref`.
 
 Representa uma coleção a ser unida. Use `NewJoinCollection` para criar a partir de um Repository:
 
@@ -34,6 +147,9 @@ Parâmetros:
 ---
 
 ## Join
+
+> **Deprecated:** será removido na próxima versão.
+> Prefira [Join encadeado com `Query`](#join-encadeado-com-query-recomendado).
 
 Busca um documento em cada coleção que contenha o valor comum e retorna um único documento mesclado:
 
@@ -76,6 +192,9 @@ result, err := monger.Join(ctx, "12345678900",
 ---
 
 ## JoinAll
+
+> **Deprecated:** será removido na próxima versão.
+> Prefira [Join encadeado com `Query`](#join-encadeado-com-query-recomendado).
 
 Similar ao `Join`, mas retorna **todos** os documentos encontrados em cada coleção (útil para relações 1:N):
 
