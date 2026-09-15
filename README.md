@@ -1,6 +1,7 @@
-<img src="assets/icon.png" alt="Monger" align="left" width="96" style="margin: 4px 16px 0 0;">
-
-# Monger
+<div align="center">
+  <img src="assets/icon.png" alt="Monger" width="96">
+  <h1>Monger</h1>
+</div>
 
 Monger é um wrapper leve (e genérico) em Go para facilitar operações comuns com MongoDB usando o driver oficial (`go.mongodb.org/mongo-driver`).
 
