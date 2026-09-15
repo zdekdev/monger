@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Monger — Buddhist monk icon</title>
+  <desc>Tibetan Buddhist monk in saffron robe, hooded, holding a small green leaf.</desc>
+  <defs>
+    <linearGradient id="robeFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F9A847"/>
+      <stop offset="60%" stop-color="#E8804A"/>
+      <stop offset="100%" stop-color="#C66030"/>
+    </linearGradient>
+    <linearGradient id="robeSide" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F8A848"/>
+      <stop offset="100%" stop-color="#D6722B"/>
+    </linearGradient>
+    <linearGradient id="hood" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#B85A20"/>
+      <stop offset="100%" stop-color="#7C3514"/>
+    </linearGradient>
+    <linearGradient id="hoodInner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7C3514"/>
+      <stop offset="100%" stop-color="#5A2A0E"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F0D2AC"/>
+      <stop offset="100%" stop-color="#D6AC80"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7CC268"/>
+      <stop offset="100%" stop-color="#3D7C36"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Ground shadow (subtle) -->
+  <ellipse cx="256" cy="470" rx="100" ry="9" fill="#000" opacity="0.08"/>
+
+  <!-- Outer robe — left drape -->
+  <path d="M 195 230
+           C 168 260, 156 310, 162 360
+           C 154 405, 158 440, 162 470
+           L 218 470
+           C 220 440, 224 405, 222 370
+           C 228 320, 234 275, 240 245
+           Z" fill="url(#robeSide)"/>
+
+  <!-- Outer robe — right drape -->
+  <path d="M 317 230
+           C 344 260, 356 310, 350 360
+           C 358 405, 354 440, 350 470
+           L 294 470
+           C 292 440, 288 405, 290 370
+           C 284 320, 278 275, 272 245
+           Z" fill="url(#robeSide)"/>
+
+  <!-- Center front robe (slightly darker, gives depth) -->
+  <path d="M 240 250
+           C 230 290, 222 350, 224 410
+           C 222 435, 222 455, 224 470
+           L 288 470
+           C 290 455, 290 435, 288 410
+           C 290 350, 282 290, 272 250
+           C 264 235, 256 232, 256 232
+           C 256 232, 248 235, 240 250 Z" fill="url(#robeFront)"/>
+
+  <!-- Fold detail on center robe (subtle darker line) -->
+  <path d="M 256 270
+           C 252 320, 248 380, 250 440"
+        stroke="#B55826" stroke-width="2" fill="none" opacity="0.35" stroke-linecap="round"/>
+  <path d="M 240 290
+           C 234 350, 230 410, 232 460"
+        stroke="#B55826" stroke-width="2" fill="none" opacity="0.25" stroke-linecap="round"/>
+  <path d="M 272 290
+           C 278 350, 282 410, 280 460"
+        stroke="#B55826" stroke-width="2" fill="none" opacity="0.25" stroke-linecap="round"/>
+
+  <!-- Hood — pointed Tibetan shape -->
+  <path d="M 256 55
+           L 207 130
+           C 198 200, 208 250, 220 280
+           L 292 280
+           C 304 250, 314 200, 305 130
+           Z" fill="url(#hood)"/>
+
+  <!-- Hood inner shadow (creates the opening, narrower) -->
+  <path d="M 256 90
+           L 234 150
+           C 232 190, 236 220, 240 245
+           L 272 245
+           C 276 220, 280 190, 278 150
+           Z" fill="url(#hoodInner)" opacity="0.92"/>
+
+  <!-- Face — peeking from hood -->
+  <ellipse cx="256" cy="190" rx="38" ry="52" fill="url(#skin)"/>
+
+  <!-- Closed eyes (meditation) -->
+  <path d="M 233 198 Q 244 192 254 198" stroke="#5C3A20" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path d="M 258 198 Q 268 192 279 198" stroke="#5C3A20" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+
+  <!-- Hands — cupped, holding the leaf -->
+  <ellipse cx="220" cy="330" rx="32" ry="12" fill="url(#skin)" transform="rotate(-12 220 330)"/>
+  <ellipse cx="292" cy="330" rx="32" ry="12" fill="url(#skin)" transform="rotate(12 292 330)"/>
+
+  <!-- Leaf — held between hands (elongated almond shape) -->
+  <path d="M 256 304
+           C 278 306, 286 318, 280 332
+           C 270 340, 248 341, 240 332
+           C 234 320, 240 306, 256 304 Z" fill="url(#leaf)"/>
+  <!-- Leaf central vein -->
+  <path d="M 256 308 L 256 335" stroke="#2D5D27" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/>
+  <!-- Side veins -->
+  <path d="M 256 315 L 268 320" stroke="#2D5D27" stroke-width="1.1" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 256 315 L 244 320" stroke="#2D5D27" stroke-width="1.1" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 256 325 L 270 329" stroke="#2D5D27" stroke-width="1.1" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 256 325 L 242 329" stroke="#2D5D27" stroke-width="1.1" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- Feet — peeking below robe -->
+  <ellipse cx="234" cy="470" rx="16" ry="6" fill="#3D1E08"/>
+  <ellipse cx="278" cy="470" rx="16" ry="6" fill="#3D1E08"/>
+</svg>
